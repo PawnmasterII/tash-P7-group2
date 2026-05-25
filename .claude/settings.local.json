@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell($paths = @\\(\"C:\\\\Program Files\\\\Git\\\\bin\\\\git.exe\", \"C:\\\\Program Files \\(x86\\)\\\\Git\\\\bin\\\\git.exe\", \"$env:LOCALAPPDATA\\\\Programs\\\\Git\\\\bin\\\\git.exe\", \"$env:USERPROFILE\\\\AppData\\\\Local\\\\Programs\\\\Git\\\\bin\\\\git.exe\"\\); foreach \\($p in $paths\\) { if \\(Test-Path $p\\) { Write-Output \"FOUND: $p\" } }; \\(Get-Command git -ErrorAction SilentlyContinue\\).Source)",
+      "PowerShell(Get-ChildItem -Path \"C:\\\\Program Files\\\\Git\" -ErrorAction SilentlyContinue; Get-ChildItem -Path \"C:\\\\Git\" -ErrorAction SilentlyContinue; Write-Output \"---winget---\"; \\(Get-Command winget -ErrorAction SilentlyContinue\\).Source; Write-Output \"---scoop---\"; \\(Get-Command scoop -ErrorAction SilentlyContinue\\).Source; Write-Output \"---gh---\"; \\(Get-Command gh -ErrorAction SilentlyContinue\\).Source)",
+      "PowerShell(\\(Get-Command git -ErrorAction SilentlyContinue\\).Source; git --version)",
+      "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); \\(Get-Command git -ErrorAction SilentlyContinue\\).Source; git --version)",
+      "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); git init; if \\($?\\) { git add README.md }; if \\($?\\) { git commit -m \"first commit\" }; if \\($?\\) { git branch -M main }; if \\($?\\) { git remote add origin https://github.com/PawnmasterII/tash-P7-group2.git }; if \\($?\\) { git push -u origin main })",
+      "PowerShell($env:Path = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\); git config --global user.name \"PawnmasterII\"; git config --global user.email \"dongtinzin@gmail.com\"; git commit -m \"first commit\"; if \\($?\\) { git branch -M main }; if \\($?\\) { git remote add origin https://github.com/PawnmasterII/tash-P7-group2.git }; if \\($?\\) { git push -u origin main })"
+    ]
+  }
+}
