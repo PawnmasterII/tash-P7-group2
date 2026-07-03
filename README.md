@@ -96,7 +96,22 @@ Clone (or place) the repo so it's importable as the package name `tash` —
 
 ```powershell
 cd C:\path\to\parent-dir          # e.g. Desktop\code\, NOT inside tash-P7-group2
-py -3.12 -m pip install -e "./tash-P7-group2"
+```
+
+**Create and activate a virtual environment before installing anything** —
+this project pulls in numpy/scipy/scikit-learn/mediapipe/opencv, which you do
+not want polluting your global Python install or colliding with other
+projects' versions of the same packages:
+
+```powershell
+py -3.12 -m venv .venv
+.venv\Scripts\activate        # macOS/Linux: source .venv/bin/activate
+```
+
+With the venv active, install the package:
+
+```powershell
+python -m pip install -e "./tash-P7-group2"
 ```
 
 > The `./` prefix matters — `pip install -e "tash-P7-group2"` (no path
@@ -106,8 +121,8 @@ py -3.12 -m pip install -e "./tash-P7-group2"
 Install extras as needed:
 
 ```powershell
-py -3.12 -m pip install -e "./tash-P7-group2[vad]"    # + webrtcvad-wheels (production-grade VAD)
-py -3.12 -m pip install -e "./tash-P7-group2[live]"   # + mediapipe, opencv-python, pvrecorder, pyttsx3
+python -m pip install -e "./tash-P7-group2[vad]"    # + webrtcvad-wheels (production-grade VAD)
+python -m pip install -e "./tash-P7-group2[live]"   # + mediapipe, opencv-python, pvrecorder, pyttsx3
 ```
 
 | Extra  | Adds                                             | Needed for |
@@ -121,7 +136,7 @@ pipeline runs in degraded mode — no cue-word detection, breathing detection
 still works):
 
 ```powershell
-py -3.12 -m tash.audio.download_model
+python -m tash.audio.download_model
 ```
 
 ## Running it
@@ -152,9 +167,9 @@ okay.") are spoken aloud via offline TTS (`pyttsx3`, SAPI5 on Windows), not
 just logged.
 
 ```powershell
-py -3.12 -m pip install -e "./tash-P7-group2[live]"
-py -3.12 -m tash.audio.download_model
-py -3.12 -m tash.live
+python -m pip install -e "./tash-P7-group2[live]"
+python -m tash.audio.download_model
+python -m tash.live
 ```
 
 Run from the parent directory (e.g. `Desktop\code\`), not from inside the
@@ -188,22 +203,22 @@ warrants it (or a future corroboration rule — see
 ```powershell
 # Full unit/integration suite (slump → voice check-in flow: reassurance,
 # "help", timeout, tier mapping, orchestrator idempotency — no real audio needed)
-py -3.12 -m pytest tests/test_slump_checkin.py -v
+python -m pytest tests/test_slump_checkin.py -v
 
 # Audio pipeline benchmark: per-stage latency, denoiser suppression (dB),
 # cue-word false-positive rate, synthetic breathing classification accuracy
-py -3.12 tests/bench_audio_pipeline.py [--quick] [--wav-dir PATH]
+python tests/bench_audio_pipeline.py [--quick] [--wav-dir PATH]
 
 # ML agonal-breathing model — out-of-distribution generalization
 # (fresh synthetic gasps at multiple SNRs + hard negatives, unseen seed)
-py -3.12 tests/test_generalization.py
+python tests/test_generalization.py
 
 # ML agonal-breathing model — evaluation against real audio recordings
 # (real agonal clips, ESC-50 environmental sounds, ICBHI stethoscope recordings)
-py -3.12 tests/test_real_data.py
+python tests/test_real_data.py
 
 # Quick smoke test: load the trained model bundle and score a handful of clips
-py -3.12 tests/smoke_test_model.py
+python tests/smoke_test_model.py
 ```
 
 > **Reading the ML model results:** `test_real_data.py`'s positive
@@ -222,10 +237,10 @@ Vision/HR contributors: validate a `Detector` in isolation by feeding it
 
 ```powershell
 # Optional: pull in more real negative/positive training data
-py -3.12 scripts/download_data.py
+python scripts/download_data.py
 
 # Retrain
-py -3.12 -m audio.train_agonal_detector \
+python -m audio.train_agonal_detector \
     --positive-dir data/agonal_real \
     --negative-dir data/icbhi_full \
     --esc50-dir    data/ESC-50-master
