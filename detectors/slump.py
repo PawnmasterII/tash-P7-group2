@@ -14,7 +14,10 @@ class SlumpDetector(Detector):
     async def observe(self, reading: SensorReading) -> DetectionEvent | None:
         angle = float(reading.payload.get("slump_angle_deg", 0.0))
         if angle >= SLUMP_ALERT_DEG:
-            tier = RiskTier.ELEVATED
+            # Severe slump: gate on voice check-in before dispatching.
+            # VoiceResponseDetector escalates to ELEVATED if no response arrives
+            # within the response window (or on a distress cue).
+            tier = RiskTier.CHECK_IN
         elif angle >= SLUMP_WATCH_DEG:
             tier = RiskTier.WATCH
         else:

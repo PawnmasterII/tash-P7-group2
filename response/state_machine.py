@@ -65,7 +65,9 @@ class ResponseOrchestrator:
         log.info("[response] firing %s (tier=%s)", action.value, tier.name)
         match action:
             case Action.VOICE_CHECK_IN:
-                await self.vehicle.speak("Are you okay? Please say yes or no.")
+                await self.vehicle.speak(
+                    "Are you okay? Say 'fine' or 'okay' if you're okay."
+                )
                 if self.on_check_in is not None:
                     await self.on_check_in()
             case Action.NOTIFY_CAREGIVER:

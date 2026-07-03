@@ -1,1 +1,19 @@
 ﻿.claude/
+
+# Python artefacts
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv*/
+
+# Audio pipeline — large binary artefacts never go in git
+audio/models/
+models/
+
+# Test audio files (synthetic or recorded; regenerate via make_test_audio.py)
+audio/test_audio/*.wav
+
+# Training datasets — large, regenerable via scripts/download_data.py
+data/
