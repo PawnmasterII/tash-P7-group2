@@ -17,3 +17,6 @@ audio/test_audio/*.wav
 
 # Training datasets — large, regenerable via scripts/download_data.py
 data/
+
+# Local investigation/report notes — not tracked
+DATA_LEAKAGE_AUDIT_REPORT.md
