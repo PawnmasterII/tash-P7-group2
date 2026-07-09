@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 
 import numpy as np
 
@@ -38,6 +39,7 @@ class AudioEngine:
         self._pipeline: Pipeline | None = None
         self._lock = asyncio.Lock()
         self._latest: FusionDecision | None = None
+        self._suppress_cues_until: float = 0.0
 
     # -------------------------------------------------------------------------
     # Lifecycle
@@ -96,8 +98,21 @@ class AudioEngine:
 
     @property
     def latest_cue(self) -> CueWordEvent | None:
-        return self._latest.cue_word if self._latest is not None else None
+        if self._latest is None:
+            return None
+        if time.monotonic() < self._suppress_cues_until:
+            return None
+        return self._latest.cue_word
 
     @property
     def latest_breathing(self) -> BreathingEstimate | None:
         return self._latest.breathing if self._latest is not None else None
+
+    def suppress_cues(self, duration_s: float) -> None:
+        """Suppress cue-word detection for the next *duration_s* seconds.
+
+        Used by the live demo to prevent the microphone from picking up the
+        spoken voice-check-in prompt (which itself contains "okay"/"fine")
+        and falsely triggering de-escalation.
+        """
+        self._suppress_cues_until = time.monotonic() + duration_s

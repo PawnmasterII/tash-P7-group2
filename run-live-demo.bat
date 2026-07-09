@@ -1,6 +1,21 @@
 @echo off
 echo Starting TASH Live Demo...
 pushd "%~dp0.."
-py -3.12 -m tash.live
+
+set "PY=.venv\Scripts\python.exe"
+
+if not exist "%PY%" (
+    echo.
+    echo [ERROR] Virtual environment not found at %PY%
+    echo Create it first:
+    echo     py -3.12 -m venv .venv
+    echo     %PY% -m pip install -e ".\tash-P7-group2[live]"
+    echo     %PY% -m tash.audio.download_model
+    goto :end
+)
+
+"%PY%" -m tash.live
+
+:end
 popd
 pause

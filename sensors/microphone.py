@@ -35,6 +35,13 @@ except ImportError:
     sf = None
 
 try:
+    import sounddevice as _sd
+    _SOUNDDEVICE_AVAILABLE = True
+except ImportError:
+    _sd = None
+    _SOUNDDEVICE_AVAILABLE = False
+
+try:
     import pvrecorder as _pvr
     _PVRECORDER_AVAILABLE = True
 except ImportError:
@@ -140,10 +147,55 @@ class Microphone(Sensor):
     # -------------------------------------------------------------------------
 
     async def _live_stream(self) -> AsyncIterator[SensorReading]:
-        if not _PVRECORDER_AVAILABLE:
+        if _SOUNDDEVICE_AVAILABLE:
+            async for reading in self._live_stream_sounddevice():
+                yield reading
+        elif _PVRECORDER_AVAILABLE:
+            async for reading in self._live_stream_pvrecorder():
+                yield reading
+        else:
             raise RuntimeError(
-                "pvrecorder not installed — use mode='wav' or: pip install pvrecorder"
+                "Neither sounddevice nor pvrecorder installed — "
+                "use mode='wav' or: pip install sounddevice"
             )
+
+    async def _live_stream_sounddevice(self) -> AsyncIterator[SensorReading]:
+        import queue as _queue
+
+        audio_q: _queue.Queue[np.ndarray] = _queue.Queue(maxsize=64)
+
+        def _callback(indata: np.ndarray, frames: int, time_info, status) -> None:
+            try:
+                audio_q.put_nowait(indata[:, 0].copy())
+            except _queue.Full:
+                pass
+
+        stream = _sd.InputStream(
+            samplerate=_SAMPLE_RATE,
+            blocksize=_CHUNK_SAMPLES,
+            channels=1,
+            dtype="int16",
+            callback=_callback,
+        )
+        stream.start()
+        stream_ts = 0.0
+        try:
+            while True:
+                pcm = await asyncio.to_thread(audio_q.get)
+                yield SensorReading(
+                    modality=self.modality,
+                    payload={
+                        "frame": pcm.tobytes(),
+                        "sample_rate": _SAMPLE_RATE,
+                        "ts": stream_ts,
+                    },
+                )
+                stream_ts += _CHUNK_DURATION_S
+        finally:
+            stream.stop()
+            stream.close()
+
+    async def _live_stream_pvrecorder(self) -> AsyncIterator[SensorReading]:
         recorder = _pvr.PvRecorder(
             device_index=self._device_index, frame_length=_CHUNK_SAMPLES
         )

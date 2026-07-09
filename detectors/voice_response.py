@@ -23,6 +23,8 @@ from __future__ import annotations
 import logging
 import time
 
+from collections.abc import Awaitable, Callable
+
 from tash.audio.contracts import CueWordEvent
 from tash.audio.engine import AudioEngine
 from tash.detectors.base import Detector
@@ -40,9 +42,15 @@ class VoiceResponseDetector(Detector):
     name = "voice_response"
     modality = Modality.MICROPHONE
 
-    def __init__(self, engine: AudioEngine, response_window_s: float = _RESPONSE_WINDOW_S) -> None:
+    def __init__(
+        self,
+        engine: AudioEngine,
+        response_window_s: float = _RESPONSE_WINDOW_S,
+        on_deescalate: Callable[[], Awaitable[None]] | None = None,
+    ) -> None:
         self._engine = engine
         self._response_window_s = response_window_s
+        self._on_deescalate = on_deescalate
         self._awaiting = False
         self._arm_monotonic: float = 0.0
         self._last_cue_ts: float = -1e9
@@ -84,6 +92,8 @@ class VoiceResponseDetector(Detector):
             if self._awaiting:
                 log.info("[voice_response] passenger reassured (%r) - de-escalating", cue.keyword)
                 self._awaiting = False
+                if self._on_deescalate is not None:
+                    await self._on_deescalate()
             return None
 
         # Distress path ("help").

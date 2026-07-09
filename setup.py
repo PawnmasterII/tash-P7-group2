@@ -41,7 +41,8 @@ setup(
         "vad":  ["webrtcvad-wheels>=2.0.10"],
         "live": [
             "pvrecorder>=1.2",
-            "mediapipe>=0.10.0",
+            "sounddevice>=0.4",
+            "mediapipe>=0.10.0,<0.10.22",
             "opencv-python>=4.8.0",
             "pyttsx3>=2.90",
         ],

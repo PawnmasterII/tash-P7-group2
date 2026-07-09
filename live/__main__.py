@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import queue
 import sys
 import threading
@@ -88,6 +89,7 @@ class LiveState:
     angle: float = 0.0
     last_action: str = ""
     last_event: str = ""
+    playing_wav: str = ""
     frame: Any = None        # numpy ndarray, latest annotated BGR frame
     webcam_active: bool = False
     quit: bool = False
@@ -153,15 +155,21 @@ class SpeechEngine:
 # ── Live vehicle + notifier (terminal output + state update) ─────────────────
 
 class LiveVehicle(VehicleController):
-    def __init__(self, state: LiveState, speech: SpeechEngine) -> None:
+    def __init__(self, state: LiveState, speech: SpeechEngine, engine: AudioEngine) -> None:
         self._state = state
         self._speech = speech
+        self._engine = engine
 
     async def speak(self, text: str) -> None:
         msg = f'VEHICLE: "{text}"'
         _action(msg)
         with self._state.lock:
             self._state.last_action = msg
+        # Suppress cue detection while TTS plays to stop the mic from
+        # picking up the spoken prompt ("okay"/"fine") and falsely
+        # de-escalating before the passenger has a chance to respond.
+        est_duration = max(2.0, len(text) / 14.0)
+        self._engine.suppress_cues(est_duration)
         self._speech.speak(text)
 
     async def listen(self, timeout_s: float) -> str | None:
@@ -225,6 +233,50 @@ class LiveOrchestrator(ResponseOrchestrator):
         await super().handle(tier, events)
 
 
+# ── Test audio playback (speaker loopback for mic testing) ────────────────────
+
+def _resolve_scenario_dir() -> str | None:
+    """Find the sibling test-audio directory."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(here, "..", "..", "tash-audio-pipeline", "test_audio", "scenarios"),
+        os.path.join(here, "..", "..", "TASHaudio", "test_audio"),
+    ]
+    for c in candidates:
+        c = os.path.normpath(c)
+        if os.path.isdir(c):
+            return c
+    return None
+
+
+def _play_wav(path: str, state: LiveState) -> None:
+    """Play a WAV through the speakers in a daemon thread (non-blocking)."""
+
+    def _worker() -> None:
+        log = logging.getLogger(__name__)
+        try:
+            import wave
+
+            import sounddevice as sd
+
+            with wave.open(path, "rb") as wf:
+                data = wf.readframes(wf.getnframes())
+                fs = wf.getframerate()
+
+            with state.lock:
+                state.playing_wav = os.path.basename(path)
+            log.info("Playing test audio: %s", path)
+            sd.play(data, fs)
+            sd.wait()
+        except Exception as exc:
+            log.warning("Failed to play %s: %s", path, exc)
+        finally:
+            with state.lock:
+                state.playing_wav = ""
+
+    threading.Thread(target=_worker, daemon=True, name="tash-wav").start()
+
+
 # ── OpenCV display (runs in main thread) ──────────────────────────────────────
 
 # Tier → BGR colour for the badge
@@ -245,6 +297,7 @@ def _draw_overlay(frame: Any, state: LiveState, cv2: Any) -> Any:
         tier = state.tier
         angle = state.angle
         last_action = state.last_action
+        playing = state.playing_wav
 
     color = _TIER_BGR.get(tier, (128, 128, 128))
 
@@ -266,6 +319,12 @@ def _draw_overlay(frame: Any, state: LiveState, cv2: Any) -> Any:
         display = last_action if len(last_action) <= 60 else last_action[:57] + "..."
         cv2.putText(frame, display, (10, h - 12),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1, cv2.LINE_AA)
+
+    # Test audio indicator (below slump angle)
+    if playing:
+        cv2.rectangle(frame, (8, 85), (380, 112), (0, 100, 180), -1)
+        cv2.putText(frame, f">> Playing: {playing}", (14, 104),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
 
     # Quit hint (top-right)
     cv2.putText(frame, "q = quit", (w - 100, 28),
@@ -321,6 +380,22 @@ def display_loop(state: LiveState) -> None:
                 state.quit = True
             break
 
+        # Test audio playback: press '1' to play a random WAV from the test data
+        if chr(key) == "1":
+            import random
+
+            wav_dir = _resolve_scenario_dir()
+            if wav_dir is not None:
+                wavs = sorted(
+                    f for f in os.listdir(wav_dir) if f.lower().endswith(".wav")
+                )
+                if wavs:
+                    picked = random.choice(wavs)
+                    _play_wav(os.path.join(wav_dir, picked), state)
+            else:
+                print(f"  {YELLOW}[test-audio]{RESET} "
+                      "Scenario directory not found.", flush=True)
+
     cv2.destroyAllWindows()
 
 
@@ -337,7 +412,20 @@ async def async_main(state: LiveState) -> None:
     log.info("AudioEngine ready  degraded=%s", engine._pipeline.degraded if engine._pipeline else "?")
 
     agonal_det = AgonalBreathingDetector(engine)
-    voice_det  = VoiceResponseDetector(engine, response_window_s=30.0)
+
+    # De-escalation callback: fired when passenger says "okay"/"fine" while
+    # armed. Suppresses the slump detector (cooldown), flushes the risk
+    # window, and resets the orchestrator so a *future* slump can re-engage.
+    async def _on_deescalate() -> None:
+        slump_det.dismiss()
+        risk_engine.clear()
+        orchestrator.reset()
+        with state.lock:
+            state.tier = RiskTier.NORMAL
+            state.last_action = "Passenger reassured — de-escalated"
+        _event(f"{GREEN}DE-ESCALATED — passenger reassured{RESET}")
+
+    voice_det  = VoiceResponseDetector(engine, response_window_s=30.0, on_deescalate=_on_deescalate)
     slump_det  = SlumpDetector()
 
     speech = SpeechEngine()
@@ -349,7 +437,7 @@ async def async_main(state: LiveState) -> None:
     )
 
     orchestrator = LiveOrchestrator(
-        vehicle=LiveVehicle(state, speech),
+        vehicle=LiveVehicle(state, speech, engine),
         notifier=LiveNotifier(state),
         trip=trip,
         on_check_in=voice_det.arm,
@@ -461,6 +549,7 @@ def main() -> None:
     print(f"  {BOLD}{WHITE}TASH -- Live Demo  |  Webcam + Microphone{RESET}")
     print(f"  {DIM}Webcam: lean forward to trigger posture detection (optional).{RESET}")
     print(f"  {DIM}Mic:    say 'help' for distress cue, 'okay'/'fine' to de-escalate.{RESET}")
+    print(f"  {DIM}        Key 1 in video window: play agonal test audio through speakers.{RESET}")
     print(f"  {DIM}Press 'q' in the video window (or Ctrl+C) to quit.{RESET}")
     print(f"{BOLD}{'=' * 62}{RESET}\n")
 

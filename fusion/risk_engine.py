@@ -33,3 +33,12 @@ class RiskEngine:
         cutoff = now() - self.window
         while self._events and self._events[0].timestamp < cutoff:
             self._events.popleft()
+
+    def clear(self) -> None:
+        """Drop all buffered events so current_tier() returns NORMAL.
+
+        Called on de-escalation so the UI reflects the passenger's
+        reassurance immediately rather than waiting for old events to
+        age out of the window.
+        """
+        self._events.clear()

@@ -136,12 +136,15 @@ class CueWordDetector:
         # flicker to "help" on noise; finals carry per-word confidence we can
         # threshold. Trade-off: detection fires at the word's end, not mid-word.
         hit: tuple[str, float] | None = None
-        if self._speech_present:
-            # Gate: only speech-bearing audio reaches the recognizer, else
-            # silence/noise gets force-decoded to "help" by the small grammar.
-            if self._rec.AcceptWaveform(pcm_int16.tobytes()):   # utterance end
-                hit = self._match_final(self._rec.Result())
-        elif was_speech:
+        # Always send audio to Vosk — the VAD gate was too aggressive for live
+        # mics and blocked short words ("fine", "okay") from ever reaching the
+        # recognizer. The full-vocabulary model + CUE_WORD_MIN_CONFIDENCE
+        # threshold handles false positives from silence/noise (the gate was
+        # originally for a restricted grammar that force-decoded noise to
+        # "help", but this pipeline uses the full vocabulary).
+        if self._rec.AcceptWaveform(pcm_int16.tobytes()):   # utterance end
+            hit = self._match_final(self._rec.Result())
+        elif was_speech and not self._speech_present:
             # Falling edge: flush the buffered utterance BEFORE it's discarded
             # (FinalResult also resets the recognizer for the next utterance).
             hit = self._match_final(self._rec.FinalResult())

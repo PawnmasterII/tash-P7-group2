@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 
 from tash.audio.engine import AudioEngine
 from tash.comms.mock import MockNotifier
@@ -18,6 +19,17 @@ from tash.sensors.posture import PostureSensor
 from tash.sensors.respiratory import RespiratorySensor
 from tash.types import TripContext
 from tash.vehicle.mock import MockVehicle
+
+# WAV replay directory for the mock demo. The default resolution in
+# Microphone expects a sibling repo named "TASHaudio"; this tries both that
+# name and the local "tash-audio-pipeline" layout so the demo runs regardless
+# of how the sibling was cloned.
+_REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
+_WAV_CANDIDATES = [
+    os.path.join(_REPO_ROOT, "..", "tash-audio-pipeline", "test_audio", "scenarios"),
+    os.path.join(_REPO_ROOT, "..", "TASHaudio", "test_audio"),
+]
+_WAV_DIR = next((d for d in _WAV_CANDIDATES if os.path.isdir(d)), _WAV_CANDIDATES[0])
 
 
 def build_runtime(engine: AudioEngine) -> TASHRuntime:
@@ -38,7 +50,7 @@ def build_runtime(engine: AudioEngine) -> TASHRuntime:
         PostureSensor(),
         HeartRateSensor(),
         # WAV replay by default; pass mode="live" for a real microphone.
-        Microphone(mode="wav"),
+        Microphone(mode="wav", wav_dir=_WAV_DIR),
     ]
     detectors = [
         # AgonalBreathingDetector MUST be first among MICROPHONE detectors so it
