@@ -11,7 +11,7 @@ librosa>=0.10
 soundfile>=0.12         # WAV replay I/O
 
 # ML training + inference (agonal detector)
-scikit-learn>=1.4       # HistGradientBoostingClassifier, StandardScaler, metrics
+scikit-learn>=1.9,<2.0  # model trained with 1.9.0 — must stay compatible
 joblib>=1.3             # parallel feature extraction + model serialisation
 
 # Optional but strongly recommended: real VAD (energy-VAD fallback if absent)

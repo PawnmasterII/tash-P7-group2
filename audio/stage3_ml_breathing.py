@@ -100,6 +100,14 @@ class MLBreathingDetector:
             self._n_fft  = bundle["n_fft"]
             self._hop    = bundle["hop_len"]
             self._ready  = True
+            # Warn on sklearn version mismatch to prevent silent failures
+            import sklearn
+            model_ver = bundle.get("sklearn_version")
+            runtime_ver = sklearn.__version__
+            if model_ver and model_ver.split(".")[:2] != runtime_ver.split(".")[:2]:
+                print(f"[Stage3-ML] WARNING: model was trained with scikit-learn "
+                      f"{model_ver} but runtime has {runtime_ver}. "
+                      f"Predictions may be unreliable. Install scikit-learn=={model_ver}")
         except FileNotFoundError:
             print(f"[Stage3-ML] Model not found at {model_path}. "
                   f"Run: py -3.12 -m audio.train_agonal_detector")

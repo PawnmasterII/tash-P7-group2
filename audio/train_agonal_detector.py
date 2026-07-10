@@ -838,6 +838,7 @@ def save_model(pipe: SkPipeline, path: str = MODEL_PATH,
     os.makedirs(os.path.dirname(path), exist_ok=True)
     scaler = pipe.named_steps.get("scaler")
     feature_dim = int(scaler.n_features_in_) if scaler is not None else None
+    import sklearn
     bundle = {
         "pipeline":    pipe,
         "window_n":    WINDOW_N,
@@ -849,6 +850,7 @@ def save_model(pipe: SkPipeline, path: str = MODEL_PATH,
         "hop_len":     HOP_LEN,
         "model_type":  "gasp_detector",
         "feature_dim": feature_dim,
+        "sklearn_version": sklearn.__version__,
         # Metrics from train()'s group-held-out split (no shared ICBHI
         # patient / source recording / synthetic lineage with the training
         # data) -- the trustworthy generalization estimate for this model.
