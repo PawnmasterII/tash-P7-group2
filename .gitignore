@@ -10,6 +10,7 @@ build/
 
 # Audio pipeline — large binary artefacts never go in git
 audio/models/
+!audio/models/agonal_detector.joblib
 models/
 
 # Test audio files (synthetic or recorded; regenerate via make_test_audio.py)
