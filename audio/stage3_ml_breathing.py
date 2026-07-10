@@ -319,3 +319,12 @@ class MLBreathingDetector:
                 "ml_model": "gasp_detector_gbm",
             },
         )
+
+    def reset(self) -> None:
+        """Flush internal buffers after de-escalation to prevent re-triggering."""
+        self._events.clear()
+        self._recent_b.clear()
+        self._buf.clear()
+        self._samples_since_a = 0
+        self._rms_ema = 0.0
+        self._last_prob = 0.0

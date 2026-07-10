@@ -116,3 +116,11 @@ class AudioEngine:
         and falsely triggering de-escalation.
         """
         self._suppress_cues_until = time.monotonic() + duration_s
+
+    def reset_breathing(self) -> None:
+        """Flush the breathing detector's internal state after de-escalation.
+
+        Prevents stale gasp events from immediately re-triggering AGONAL_SUSPECT.
+        """
+        if self._pipeline is not None and hasattr(self._pipeline.breathing, 'reset'):
+            self._pipeline.breathing.reset()

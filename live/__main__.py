@@ -417,6 +417,7 @@ async def async_main(state: LiveState) -> None:
         slump_det.dismiss()
         risk_engine.clear()
         orchestrator.reset()
+        engine.reset_breathing()
         with state.lock:
             state.tier = RiskTier.NORMAL
             state.last_action = "Passenger reassured — de-escalated"
