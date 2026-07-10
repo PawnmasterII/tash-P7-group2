@@ -3,7 +3,7 @@
 # without it the pipeline falls back to an energy-VAD (coarser, still functional).
 
 # Audio pipeline (vendored from TASHaudio)
-numpy>=1.24
+numpy>=1.24,<2.0        # mediapipe requires <2; model re-saved for compat
 scipy>=1.10
 noisereduce>=3.0.0
 vosk>=0.3.45            # offline ASR cue-word spotting — no key, recognises "help"
