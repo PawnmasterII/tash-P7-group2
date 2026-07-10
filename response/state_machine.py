@@ -60,6 +60,10 @@ class ResponseOrchestrator:
                 continue
             await self._fire(action, tier, events)
             self._fired.add(action)
+            # After firing a check-in, stop and wait for passenger response
+            # before firing any further actions in the ladder.
+            if action == Action.VOICE_CHECK_IN:
+                break
 
     def reset(self) -> None:
         self._fired.clear()
