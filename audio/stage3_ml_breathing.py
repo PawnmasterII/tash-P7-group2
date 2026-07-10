@@ -119,6 +119,7 @@ class MLBreathingDetector:
 
         # Stage B: timestamped event list (ts when gasp was detected)
         self._events: list[float] = []   # stream-relative seconds
+        self._reset_ts: float = 0.0      # stream time of last reset (for elapsed calc)
 
         # Persistence filter (Stage B output)
         self._recent_b: deque[BreathingState] = deque(maxlen=PERSIST_N)
@@ -213,7 +214,8 @@ class MLBreathingDetector:
         self._events = [t for t in self._events if t >= cutoff]
 
         n_events = len(self._events)
-        elapsed  = min(ts, RATE_WINDOW_S)
+        # Elapsed since reset (or stream start), capped at rate window
+        elapsed  = min(ts - self._reset_ts, RATE_WINDOW_S)
 
         if elapsed < 10.0:
             return BreathingState.AMBIGUOUS, 0.3
@@ -328,3 +330,4 @@ class MLBreathingDetector:
         self._samples_since_a = 0
         self._rms_ema = 0.0
         self._last_prob = 0.0
+        self._reset_ts = self._last_ts  # force 10s cooldown before next classification

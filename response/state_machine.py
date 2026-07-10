@@ -48,10 +48,11 @@ class ResponseOrchestrator:
         # so the passenger has a chance to respond and de-escalate.
         # Exception: CRITICAL tier always proceeds; timeout/help events end the hold.
         if self._awaiting_checkin:
-            # Check if the voice detector resolved (timeout or confirmed distress)
+            # Check if the LATEST event resolves the check-in (timeout or distress).
+            # Only inspect the last event to avoid stale labels from previous cycles.
             _RESOLVED_LABELS = ("no_response_timeout", "help_while_awaiting")
-            resolved = any(e.label in _RESOLVED_LABELS for e in events)
-            if resolved:
+            latest = events[-1] if events else None
+            if latest is not None and latest.label in _RESOLVED_LABELS:
                 self._awaiting_checkin = False
             elif tier < RiskTier.CRITICAL:
                 return
