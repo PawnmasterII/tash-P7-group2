@@ -41,8 +41,20 @@ class ResponseOrchestrator:
     trip: TripContext
     on_check_in: Callable[[], Awaitable[None]] | None = None
     _fired: set[Action] = field(default_factory=set)
+    _awaiting_checkin: bool = field(default=False, init=False)
 
     async def handle(self, tier: RiskTier, events: list[DetectionEvent]) -> None:
+        # While a voice check-in is pending, hold off on further escalation
+        # so the passenger has a chance to respond and de-escalate.
+        # Exception: CRITICAL tier always proceeds; timeout/help events end the hold.
+        if self._awaiting_checkin:
+            # Check if the voice detector resolved (timeout or confirmed distress)
+            _RESOLVED_LABELS = ("no_response_timeout", "help_while_awaiting")
+            resolved = any(e.label in _RESOLVED_LABELS for e in events)
+            if resolved:
+                self._awaiting_checkin = False
+            elif tier < RiskTier.CRITICAL:
+                return
         for action in LADDER.get(tier, ()):
             if action in self._fired:
                 continue
@@ -51,6 +63,7 @@ class ResponseOrchestrator:
 
     def reset(self) -> None:
         self._fired.clear()
+        self._awaiting_checkin = False
 
     @property
     def fired_actions(self) -> frozenset[Action]:
@@ -65,6 +78,7 @@ class ResponseOrchestrator:
         log.info("[response] firing %s (tier=%s)", action.value, tier.name)
         match action:
             case Action.VOICE_CHECK_IN:
+                self._awaiting_checkin = True
                 await self.vehicle.speak(
                     "Are you okay? Say 'fine' or 'okay' if you're okay."
                 )

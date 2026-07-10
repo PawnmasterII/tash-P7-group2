@@ -255,13 +255,10 @@ def _play_wav(path: str, state: LiveState) -> None:
     def _worker() -> None:
         log = logging.getLogger(__name__)
         try:
-            import wave
-
             import sounddevice as sd
+            import soundfile as sf
 
-            with wave.open(path, "rb") as wf:
-                data = wf.readframes(wf.getnframes())
-                fs = wf.getframerate()
+            data, fs = sf.read(path, dtype="float32")
 
             with state.lock:
                 state.playing_wav = os.path.basename(path)
