@@ -5,7 +5,7 @@ Scenarios:
   2. Slump + "help"        → CHECK_IN → distress cue while armed → ELEVATED
   3. Slump + "okay"        → CHECK_IN → passenger reassures → de-escalated
   4. Cardiac spike         → ELEVATED immediately (HR > 130 bpm)
-  5. Audio WAV replay      → agonal breathing → ELEVATED  [if TASHaudio present]
+  5. Audio WAV replay      → agonal breathing → ELEVATED  [audio/test_audio/]
 
 Usage (from Desktop/code/ — NOT from inside the repo):
     py -3.12 -m tash.demo
@@ -21,6 +21,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
 from tash.audio.contracts import CueWordEvent, EscalationLevel, FusionDecision
+from tash.audio.test_audio import resolve_test_audio_dir
 from tash.comms.base import Notifier
 from tash.core.event_bus import EventBus
 from tash.detectors.agonal_breathing import AgonalBreathingDetector
@@ -328,15 +329,13 @@ async def run_scenario(
 # ── Optional: audio WAV scenario ─────────────────────────────────────────────
 
 async def run_audio_scenario() -> None:
-    """Full audio pipeline on agonal_gasps.wav.  Requires TASHaudio sibling repo."""
-    wav_dir = os.path.normpath(
-        os.path.join(os.path.dirname(__file__), "..", "..", "TASHaudio", "test_audio")
-    )
-    if not os.path.isdir(wav_dir) or not any(
+    """Full audio pipeline on real agonal demo WAVs from audio/test_audio/."""
+    wav_dir = resolve_test_audio_dir()
+    if wav_dir is None or not any(
         f.endswith(".wav") for f in os.listdir(wav_dir)
     ):
         print(f"\n  {DIM}Skipping audio scenario — "
-              f"no WAV files found at {wav_dir}{RESET}")
+              f"no demo WAV files found. Run: py -3.12 scripts/sync_demo_audio.py{RESET}")
         return
 
     from tash.audio.engine import AudioEngine
@@ -344,7 +343,7 @@ async def run_audio_scenario() -> None:
 
     _header(
         "Scenario 5 — Audio: Agonal Breathing (WAV replay)",
-        "Replays agonal_gasps.wav through the full Vosk/denoise/breathing pipeline.",
+        "Replays demo_agonal_real.wav through the full Vosk/denoise/breathing pipeline.",
     )
 
     print(f"  {DIM}Loading Vosk model … (first run may take a moment){RESET}")
@@ -382,7 +381,12 @@ async def run_audio_scenario() -> None:
     detectors = [agonal_det, voice_det]
     det_map = {Modality.MICROPHONE: detectors}
 
-    mic = Microphone(mode="wav", wav_dir=wav_dir, loop=False)
+    mic = Microphone(
+        mode="wav",
+        wav_dir=wav_dir,
+        loop=False,
+        include=["demo_agonal_real.wav"],
+    )
 
     async def _sensor_loop() -> None:
         async for r in mic.stream():

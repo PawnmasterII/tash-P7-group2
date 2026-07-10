@@ -15,6 +15,7 @@ models/
 
 # Test audio files (synthetic or recorded; regenerate via make_test_audio.py)
 audio/test_audio/*.wav
+!audio/test_audio/demo_*.wav
 
 # Training datasets — large, regenerable via scripts/download_data.py
 data/

@@ -33,9 +33,10 @@ import time
 from collections import deque
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from tash.audio.engine import AudioEngine
+from tash.audio.test_audio import WavPlayer, primary_demo_wav, resolve_test_audio_dir
 from tash.comms.base import Notifier
 from tash.core.event_bus import EventBus
 from tash.detectors.agonal_breathing import AgonalBreathingDetector
@@ -93,6 +94,7 @@ class LiveState:
     frame: Any = None        # numpy ndarray, latest annotated BGR frame
     webcam_active: bool = False
     quit: bool = False
+    suppress_cues: Callable[[float], None] | None = None
 
 
 # ── Text-to-speech (dedicated worker thread) ──────────────────────────────────
@@ -235,43 +237,30 @@ class LiveOrchestrator(ResponseOrchestrator):
 
 # ── Test audio playback (speaker loopback for mic testing) ────────────────────
 
-def _resolve_scenario_dir() -> str | None:
-    """Find the sibling test-audio directory."""
-    here = os.path.dirname(os.path.abspath(__file__))
-    candidates = [
-        os.path.join(here, "..", "..", "tash-audio-pipeline", "test_audio", "scenarios"),
-        os.path.join(here, "..", "..", "TASHaudio", "test_audio"),
-    ]
-    for c in candidates:
-        c = os.path.normpath(c)
-        if os.path.isdir(c):
-            return c
-    return None
+_wav_player = WavPlayer()
 
 
-def _play_wav(path: str, state: LiveState) -> None:
-    """Play a WAV through the speakers in a daemon thread (non-blocking)."""
+def _play_demo_wav(path: str, state: LiveState) -> None:
+    """Play a WAV through the speakers (non-blocking, single playback at a time)."""
 
-    def _worker() -> None:
-        log = logging.getLogger(__name__)
-        try:
-            import sounddevice as sd
-            import soundfile as sf
+    def _on_start(name: str) -> None:
+        with state.lock:
+            state.playing_wav = name
+        suppress = state.suppress_cues
+        if suppress is not None:
+            try:
+                import soundfile as sf
 
-            data, fs = sf.read(path, dtype="float32")
+                dur = sf.info(path).duration
+            except Exception:
+                dur = 30.0
+            suppress(max(3.0, dur + 1.0))
 
-            with state.lock:
-                state.playing_wav = os.path.basename(path)
-            log.info("Playing test audio: %s", path)
-            sd.play(data, fs)
-            sd.wait()
-        except Exception as exc:
-            log.warning("Failed to play %s: %s", path, exc)
-        finally:
-            with state.lock:
-                state.playing_wav = ""
+    def _on_end() -> None:
+        with state.lock:
+            state.playing_wav = ""
 
-    threading.Thread(target=_worker, daemon=True, name="tash-wav").start()
+    _wav_player.play(path, on_start=_on_start, on_end=_on_end)
 
 
 # ── OpenCV display (runs in main thread) ──────────────────────────────────────
@@ -377,21 +366,20 @@ def display_loop(state: LiveState) -> None:
                 state.quit = True
             break
 
-        # Test audio playback: press '1' to play a random WAV from the test data
+        # Test audio playback: press '1' to play real agonal demo audio through speakers
         if chr(key) == "1":
-            import random
-
-            wav_dir = _resolve_scenario_dir()
-            if wav_dir is not None:
-                wavs = sorted(
-                    f for f in os.listdir(wav_dir) if f.lower().endswith(".wav")
-                )
-                if wavs:
-                    picked = random.choice(wavs)
-                    _play_wav(os.path.join(wav_dir, picked), state)
+            wav_dir = resolve_test_audio_dir()
+            picked = primary_demo_wav(wav_dir)
+            if wav_dir is not None and picked is not None:
+                _play_demo_wav(os.path.join(wav_dir, picked), state)
+            elif wav_dir is not None:
+                print(f"  {YELLOW}[test-audio]{RESET} No demo clip in {wav_dir}.", flush=True)
             else:
-                print(f"  {YELLOW}[test-audio]{RESET} "
-                      "Scenario directory not found.", flush=True)
+                print(
+                    f"  {YELLOW}[test-audio]{RESET} No demo audio found. "
+                    "Run: py -3.12 scripts/sync_demo_audio.py",
+                    flush=True,
+                )
 
     cv2.destroyAllWindows()
 
@@ -407,6 +395,8 @@ async def async_main(state: LiveState) -> None:
     engine = AudioEngine()
     await engine.start()
     log.info("AudioEngine ready  degraded=%s", engine._pipeline.degraded if engine._pipeline else "?")
+
+    state.suppress_cues = engine.suppress_cues
 
     agonal_det = AgonalBreathingDetector(engine)
 
@@ -527,6 +517,7 @@ async def async_main(state: LiveState) -> None:
     await asyncio.gather(*tasks, return_exceptions=True)
 
     speech.stop()
+    _wav_player.stop()
     engine.close()
     log.info("Live demo stopped.")
 
@@ -547,7 +538,7 @@ def main() -> None:
     print(f"  {BOLD}{WHITE}TASH -- Live Demo  |  Webcam + Microphone{RESET}")
     print(f"  {DIM}Webcam: lean forward to trigger posture detection (optional).{RESET}")
     print(f"  {DIM}Mic:    say 'help' for distress cue, 'okay'/'fine' to de-escalate.{RESET}")
-    print(f"  {DIM}        Key 1 in video window: play agonal test audio through speakers.{RESET}")
+    print(f"  {DIM}        Key 1 in video window: play real agonal demo audio (audio/test_audio/).{RESET}")
     print(f"  {DIM}Press 'q' in the video window (or Ctrl+C) to quit.{RESET}")
     print(f"{BOLD}{'=' * 62}{RESET}\n")
 

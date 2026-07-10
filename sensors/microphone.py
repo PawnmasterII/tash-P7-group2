@@ -28,6 +28,7 @@ import numpy as np
 
 from tash.sensors.base import Sensor
 from tash.types import Modality, SensorReading
+from tash.audio.test_audio import resolve_test_audio_dir
 
 try:
     import soundfile as sf
@@ -62,14 +63,16 @@ class Microphone(Sensor):
         "wav"  — replay WAV files from *wav_dir* (default, no mic required)
         "live" — capture from the default audio device via pvrecorder
     wav_dir : str | None
-        Directory containing *.wav files for replay mode. If None, the sensor
-        looks for a ``test_audio/`` directory adjacent to the TASHaudio repo
-        (sibling to this package at ``../../TASHaudio/test_audio``).
+        Directory containing *.wav files for replay mode. If None, uses
+        ``audio/test_audio/`` in this repo, then sibling test-audio dirs.
     device_index : int
         pvrecorder device index (-1 = system default). Only used in live mode.
     loop : bool
         WAV mode only. If True, replay files in a loop indefinitely.
         Default False (replay once then stop).
+    include : list[str] | None
+        WAV mode only. If set, replay only these basenames (e.g.
+        ``["demo_agonal_real.wav"]``).
     """
 
     modality = Modality.MICROPHONE
@@ -80,6 +83,7 @@ class Microphone(Sensor):
         wav_dir: str | None = None,
         device_index: int = -1,
         loop: bool = False,
+        include: list[str] | None = None,
     ) -> None:
         if mode not in ("wav", "live"):
             raise ValueError(f"mode must be 'wav' or 'live', got {mode!r}")
@@ -87,6 +91,7 @@ class Microphone(Sensor):
         self._wav_dir = _resolve_wav_dir(wav_dir)
         self._device_index = device_index
         self._loop = loop
+        self._include = set(include) if include else None
 
     def stream(self) -> AsyncIterator[SensorReading]:  # type: ignore[override]
         if self._mode == "live":
@@ -104,10 +109,12 @@ class Microphone(Sensor):
                 "Install it with: pip install soundfile"
             )
         files = sorted(glob.glob(os.path.join(self._wav_dir, "*.wav")))
+        if self._include is not None:
+            files = [f for f in files if os.path.basename(f) in self._include]
         if not files:
             raise RuntimeError(
                 f"No *.wav files found in {self._wav_dir}. "
-                "Copy or symlink TASHaudio/test_audio/ there, or pass wav_dir= explicitly."
+                "Run: py -3.12 scripts/sync_demo_audio.py"
             )
 
         first_pass = True
@@ -227,11 +234,8 @@ class Microphone(Sensor):
 def _resolve_wav_dir(wav_dir: str | None) -> str:
     if wav_dir is not None:
         return wav_dir
-    # Default: look next to the TASHaudio repo (sibling to tash-P7-group2).
-    # Layout expected:
-    #   Desktop/code/
-    #     TASHaudio/test_audio/   ← WAV files live here
-    #     tash-P7-group2/         ← this package
-    here = os.path.dirname(os.path.abspath(__file__))   # .../tash-P7-group2/sensors/
-    candidate = os.path.normpath(os.path.join(here, "..", "..", "TASHaudio", "test_audio"))
-    return candidate
+    resolved = resolve_test_audio_dir()
+    if resolved is not None:
+        return resolved
+    here = os.path.dirname(os.path.abspath(__file__))
+    return os.path.normpath(os.path.join(here, "..", "audio", "test_audio"))

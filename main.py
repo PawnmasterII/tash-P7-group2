@@ -5,6 +5,7 @@ import logging
 import os
 
 from tash.audio.engine import AudioEngine
+from tash.audio.test_audio import resolve_test_audio_dir
 from tash.comms.mock import MockNotifier
 from tash.core.orchestrator import TASHRuntime
 from tash.detectors.agonal_breathing import AgonalBreathingDetector
@@ -20,16 +21,11 @@ from tash.sensors.respiratory import RespiratorySensor
 from tash.types import TripContext
 from tash.vehicle.mock import MockVehicle
 
-# WAV replay directory for the mock demo. The default resolution in
-# Microphone expects a sibling repo named "TASHaudio"; this tries both that
-# name and the local "tash-audio-pipeline" layout so the demo runs regardless
-# of how the sibling was cloned.
-_REPO_ROOT = os.path.dirname(os.path.abspath(__file__))
-_WAV_CANDIDATES = [
-    os.path.join(_REPO_ROOT, "..", "tash-audio-pipeline", "test_audio", "scenarios"),
-    os.path.join(_REPO_ROOT, "..", "TASHaudio", "test_audio"),
-]
-_WAV_DIR = next((d for d in _WAV_CANDIDATES if os.path.isdir(d)), _WAV_CANDIDATES[0])
+# WAV replay directory for the mock demo. Prefers in-repo audio/test_audio/,
+# then sibling tash-audio-pipeline or TASHaudio layouts.
+_WAV_DIR = resolve_test_audio_dir() or os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "audio", "test_audio"
+)
 
 
 def build_runtime(engine: AudioEngine) -> TASHRuntime:
