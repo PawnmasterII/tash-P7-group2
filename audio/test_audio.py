@@ -24,6 +24,7 @@ REPO_TEST_AUDIO_DIR = os.path.join(_AUDIO_DIR, "test_audio")
 _DEMO_GLOB = "demo_*.wav"
 _WAV_GLOB = "*.wav"
 PRIMARY_DEMO_WAV = "demo_agonal_real.wav"
+DEMO_PLAYBACK_LAST_SECONDS = 10.0
 
 
 def _repo_root() -> str:
@@ -74,8 +75,11 @@ def list_demo_wavs(directory: str | None = None) -> list[str]:
     return sorted(os.path.basename(p) for p in glob.glob(os.path.join(directory, _WAV_GLOB)))
 
 
-def load_for_playback(path: str) -> tuple["object", int]:
-    """Load a WAV as mono float32 for speaker playback."""
+def load_for_playback(path: str, *, last_seconds: float | None = None) -> tuple["object", int]:
+    """Load a WAV as mono float32 for speaker playback.
+
+    If *last_seconds* is set, only the final N seconds are returned.
+    """
     import numpy as np
 
     try:
@@ -87,6 +91,10 @@ def load_for_playback(path: str) -> tuple["object", int]:
     if getattr(data, "ndim", 1) > 1:
         data = data.mean(axis=1)
     data = np.asarray(data, dtype=np.float32)
+    if last_seconds is not None and last_seconds > 0 and len(data) > 0:
+        max_samples = int(last_seconds * fs)
+        if len(data) > max_samples:
+            data = data[-max_samples:]
     peak = float(np.max(np.abs(data))) if len(data) else 0.0
     if peak > 1.0:
         data = data / peak
@@ -122,6 +130,7 @@ class WavPlayer:
         self,
         path: str,
         *,
+        last_seconds: float | None = DEMO_PLAYBACK_LAST_SECONDS,
         on_start: Callable[[str], None] | None = None,
         on_end: Callable[[], None] | None = None,
     ) -> bool:
@@ -135,7 +144,7 @@ class WavPlayer:
                 self.stop()
             self._thread = threading.Thread(
                 target=self._worker,
-                args=(path, on_start, on_end),
+                args=(path, last_seconds, on_start, on_end),
                 daemon=True,
                 name="tash-wav-player",
             )
@@ -145,6 +154,7 @@ class WavPlayer:
     def _worker(
         self,
         path: str,
+        last_seconds: float | None,
         on_start: Callable[[str], None] | None,
         on_end: Callable[[], None] | None,
     ) -> None:
@@ -152,10 +162,14 @@ class WavPlayer:
         try:
             import sounddevice as sd
 
-            data, fs = load_for_playback(path)
+            data, fs = load_for_playback(path, last_seconds=last_seconds)
             if on_start is not None:
                 on_start(basename)
-            log.info("Playing test audio: %s", path)
+            log.info(
+                "Playing test audio: %s (last %.1fs)",
+                path,
+                last_seconds if last_seconds is not None else len(data) / fs,
+            )
 
             block = max(1024, int(fs * 0.05))
             with sd.OutputStream(samplerate=fs, channels=1, dtype="float32") as stream:

@@ -36,7 +36,12 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from tash.audio.engine import AudioEngine
-from tash.audio.test_audio import WavPlayer, primary_demo_wav, resolve_test_audio_dir
+from tash.audio.test_audio import (
+    DEMO_PLAYBACK_LAST_SECONDS,
+    WavPlayer,
+    primary_demo_wav,
+    resolve_test_audio_dir,
+)
 from tash.comms.base import Notifier
 from tash.core.event_bus import EventBus
 from tash.detectors.agonal_breathing import AgonalBreathingDetector
@@ -79,6 +84,58 @@ def _event(msg: str) -> None:
 
 def _info(msg: str) -> None:
     print(f"  {CYAN}  {RESET} {_ts()} {msg}", flush=True)
+
+
+# Friendly console labels — makes it obvious whether posture or audio drove an alert.
+_DETECTOR_SOURCE: dict[str, tuple[str, str]] = {
+    "slump": (MAGENTA, "POSTURE — slump"),
+    "agonal_breathing": (RED, "AUDIO — agonal breathing"),
+    "voice_response": (YELLOW, "VOICE"),
+}
+
+
+def _format_detection(ev: DetectionEvent) -> str:
+    """One-line detection event for the event stream."""
+    color, source = _DETECTOR_SOURCE.get(ev.detector, (WHITE, ev.detector))
+    if ev.detector == "slump":
+        angle = ev.metadata.get("angle_deg")
+        detail = f"angle {angle:.0f}°" if angle is not None else ev.label
+    elif ev.detector == "agonal_breathing":
+        detail = ev.label.replace("_", " ")
+    else:
+        detail = ev.label.replace("_", " ")
+    return f"{color}{source}{RESET}  tier={ev.risk_tier.name}  ({detail})"
+
+
+def _format_driver(ev: DetectionEvent) -> str:
+    """Short attribution string for tier-change announcements."""
+    color, source = _DETECTOR_SOURCE.get(ev.detector, (WHITE, ev.detector))
+    if ev.detector == "slump":
+        angle = ev.metadata.get("angle_deg")
+        detail = f"angle {angle:.0f}°" if angle is not None else "slump"
+    elif ev.detector == "agonal_breathing":
+        detail = ev.label.replace("_", " ")
+    else:
+        detail = ev.label.replace("_", " ")
+    return f"{color}{source}{RESET} ({detail})"
+
+
+def _tier_drivers(events: list[DetectionEvent], tier: RiskTier) -> list[DetectionEvent]:
+    """Newest event per detector that is contributing at *tier*."""
+    by_detector: dict[str, DetectionEvent] = {}
+    for ev in reversed(events):
+        if ev.risk_tier == tier and ev.detector not in by_detector:
+            by_detector[ev.detector] = ev
+    return list(by_detector.values())
+
+
+def _announce_tier_change(tier: RiskTier, drivers: list[DetectionEvent]) -> None:
+    """Prominent line when the fused risk tier changes."""
+    if tier == RiskTier.NORMAL:
+        _action(f"{BOLD}RISK TIER → NORMAL{RESET}")
+        return
+    driver_text = ", ".join(_format_driver(d) for d in drivers) if drivers else "unknown"
+    _action(f"{BOLD}RISK TIER → {tier.name}{RESET}  triggered by: {driver_text}")
 
 
 # ── Shared state (written by asyncio thread, read by display thread) ─────────
@@ -248,13 +305,7 @@ def _play_demo_wav(path: str, state: LiveState) -> None:
             state.playing_wav = name
         suppress = state.suppress_cues
         if suppress is not None:
-            try:
-                import soundfile as sf
-
-                dur = sf.info(path).duration
-            except Exception:
-                dur = 30.0
-            suppress(max(3.0, dur + 1.0))
+            suppress(max(3.0, DEMO_PLAYBACK_LAST_SECONDS + 1.0))
 
     def _on_end() -> None:
         with state.lock:
@@ -319,14 +370,24 @@ def _draw_overlay(frame: Any, state: LiveState, cv2: Any) -> Any:
     return frame
 
 
-def _make_placeholder(cv2: Any, w: int = 800, h: int = 600) -> Any:
+def _make_placeholder(cv2: Any, state: LiveState, w: int = 800, h: int = 600) -> Any:
     """Black frame shown when no webcam is connected."""
     import numpy as np
     frame = np.zeros((h, w, 3), dtype=np.uint8)
-    cv2.putText(frame, "No webcam detected", (w // 2 - 160, h // 2 - 20),
-                cv2.FONT_HERSHEY_SIMPLEX, 1.0, (80, 80, 80), 2, cv2.LINE_AA)
-    cv2.putText(frame, "Audio pipeline active  |  q = quit", (w // 2 - 195, h // 2 + 20),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (60, 60, 60), 1, cv2.LINE_AA)
+    with state.lock:
+        active = state.webcam_active
+    if active:
+        title = "Waiting for camera frames..."
+        hint = "If this persists, close other camera apps and restart"
+    else:
+        title = "No webcam detected"
+        hint = "Close Zoom/Teams  |  Settings > Privacy > Camera  |  q = quit"
+    cv2.putText(frame, title, (w // 2 - 210, h // 2 - 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.85, (80, 80, 80), 2, cv2.LINE_AA)
+    cv2.putText(frame, "Audio pipeline active", (w // 2 - 130, h // 2 + 5),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.65, (70, 70, 70), 1, cv2.LINE_AA)
+    cv2.putText(frame, hint, (w // 2 - 280, h // 2 + 35),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (60, 60, 60), 1, cv2.LINE_AA)
     return frame
 
 
@@ -342,7 +403,7 @@ def display_loop(state: LiveState) -> None:
 
     cv2.namedWindow("TASH Live Demo", cv2.WINDOW_NORMAL)
     cv2.resizeWindow("TASH Live Demo", 800, 600)
-    placeholder = _make_placeholder(cv2)
+    placeholder = _make_placeholder(cv2, state)
 
     while True:
         with state.lock:
@@ -400,17 +461,32 @@ async def async_main(state: LiveState) -> None:
 
     agonal_det = AgonalBreathingDetector(engine)
 
+    # After de-escalation, ignore already-queued detection events for a short
+    # grace window. Otherwise an apnea/agonal event published on the same mic
+    # frame (before voice_response cleared state) re-fires VOICE_CHECK_IN.
+    deescalate_grace_until = 0.0
+    DEESCALATE_GRACE_S = 4.0
+    last_fused_tier = RiskTier.NORMAL
+    # Throttle repeated posture/audio lines (webcam + mic fire every frame).
+    last_logged_detection: dict[str, tuple[str, str]] = {}
+
     # De-escalation callback: fired when passenger says "okay"/"fine" while
     # armed. Suppresses the slump detector (cooldown), flushes the risk
     # window, and resets the orchestrator so a *future* slump can re-engage.
     async def _on_deescalate() -> None:
+        nonlocal deescalate_grace_until, last_fused_tier
         slump_det.dismiss()
         risk_engine.clear()
         orchestrator.reset()
         engine.reset_breathing()
+        deescalate_grace_until = time.monotonic() + DEESCALATE_GRACE_S
+        last_logged_detection.clear()
+        last_fused_tier = RiskTier.NORMAL
         with state.lock:
             state.tier = RiskTier.NORMAL
+            state.last_event = ""
             state.last_action = "Passenger reassured — de-escalated"
+        _announce_tier_change(RiskTier.NORMAL, [])
         _event(f"{GREEN}DE-ESCALATED — passenger reassured{RESET}")
 
     voice_det  = VoiceResponseDetector(engine, response_window_s=30.0, on_deescalate=_on_deescalate)
@@ -438,19 +514,23 @@ async def async_main(state: LiveState) -> None:
     sensors = [mic_sensor]
     detectors = [agonal_det, voice_det]
 
+    camera_index = int(os.environ.get("TASH_CAMERA_INDEX", "0"))
     try:
-        webcam_sensor = WebcamPostureSensor(state, camera_index=0)
+        webcam_sensor = WebcamPostureSensor(state, camera_index=camera_index)
         await webcam_sensor.start()
         sensors.insert(0, webcam_sensor)
         detectors.append(slump_det)
-        log.info("Webcam opened — posture detection active.")
+        opened = webcam_sensor._opened_index
+        log.info("Webcam opened at index %s — posture detection active.", opened)
         with state.lock:
             state.webcam_active = True
     except Exception as exc:
         log.warning("Webcam unavailable (%s) — running audio-only.", exc)
         print(
             f"  {YELLOW}[webcam]{RESET} No camera found — "
-            "posture detection disabled, audio pipeline active.",
+            "posture detection disabled, audio pipeline active.\n"
+            f"  {DIM}Tips: close Zoom/Teams/Camera, enable Windows camera privacy for "
+            "desktop apps, or set TASH_CAMERA_INDEX=1{RESET}",
             flush=True,
         )
 
@@ -483,19 +563,32 @@ async def async_main(state: LiveState) -> None:
             for det in det_map.get(reading.modality, ()):
                 ev = await det.observe(reading)
                 if ev is not None:
-                    _event(
-                        f"{det.name}: label={ev.label!r}  tier={ev.risk_tier.name}"
-                    )
+                    key = (ev.label, ev.risk_tier.name)
+                    if det.name in ("slump", "agonal_breathing"):
+                        if last_logged_detection.get(det.name) == key:
+                            await detection_bus.publish(ev)
+                            continue
+                        last_logged_detection[det.name] = key
+                    _event(_format_detection(ev))
                     with state.lock:
-                        state.last_event = f"{det.name}: {ev.label}"
+                        state.last_event = _format_driver(ev)
                     await detection_bus.publish(ev)
 
     async def _fusion_loop():
+        nonlocal last_fused_tier
         recent: deque[DetectionEvent] = deque(maxlen=32)
         while not state.quit:
             ev = await detection_q.get()
+            if time.monotonic() < deescalate_grace_until:
+                # Drop in-flight events from the same cycle as "okay"/"fine".
+                recent.clear()
+                continue
             recent.append(ev)
             tier = risk_engine.ingest(ev)
+            if tier != last_fused_tier:
+                drivers = _tier_drivers(list(recent), tier) if tier > RiskTier.NORMAL else []
+                _announce_tier_change(tier, drivers)
+                last_fused_tier = tier
             await orchestrator.handle(tier, list(recent))
 
     async def _quit_watcher():
@@ -538,7 +631,7 @@ def main() -> None:
     print(f"  {BOLD}{WHITE}TASH -- Live Demo  |  Webcam + Microphone{RESET}")
     print(f"  {DIM}Webcam: lean forward to trigger posture detection (optional).{RESET}")
     print(f"  {DIM}Mic:    say 'help' for distress cue, 'okay'/'fine' to de-escalate.{RESET}")
-    print(f"  {DIM}        Key 1 in video window: play real agonal demo audio (audio/test_audio/).{RESET}")
+    print(f"  {DIM}        Key 1 in video window: play last {DEMO_PLAYBACK_LAST_SECONDS:.0f}s of agonal demo (audio/test_audio/).{RESET}")
     print(f"  {DIM}Press 'q' in the video window (or Ctrl+C) to quit.{RESET}")
     print(f"{BOLD}{'=' * 62}{RESET}\n")
 

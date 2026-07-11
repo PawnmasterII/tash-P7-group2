@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import sys
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
@@ -52,6 +53,56 @@ def _check_deps() -> tuple[Any, Any, Any]:
             "  pip install mediapipe"
         )
     return cv2, mp, mp.solutions.pose
+
+
+def _camera_backends(cv2: Any) -> list[int | None]:
+    """Prefer DirectShow on Windows — default MSMF often reports open but never delivers frames."""
+    if sys.platform == "win32":
+        return [cv2.CAP_DSHOW, cv2.CAP_MSMF, None]
+    return [None]
+
+
+def _camera_indices(preferred: int) -> list[int]:
+    indices = [preferred]
+    for i in range(4):
+        if i not in indices:
+            indices.append(i)
+    return indices
+
+
+def open_webcam_capture(cv2: Any, preferred_index: int = 0) -> tuple[Any, int]:
+    """Open the first webcam that delivers real frames.
+
+    Returns (VideoCapture, index_used). Raises RuntimeError if none work.
+    """
+    last_error = "no camera returned frames"
+    for index in _camera_indices(preferred_index):
+        for backend in _camera_backends(cv2):
+            cap = (
+                cv2.VideoCapture(index, backend)
+                if backend is not None
+                else cv2.VideoCapture(index)
+            )
+            if not cap.isOpened():
+                cap.release()
+                last_error = f"index {index} backend {backend}: not opened"
+                continue
+            try:
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            except Exception:
+                pass
+            # First frames after open are often stale/black on Windows.
+            for _ in range(8):
+                ret, frame = cap.read()
+                if ret and frame is not None:
+                    return cap, index
+            cap.release()
+            last_error = f"index {index} backend {backend}: opened but no frames"
+    raise RuntimeError(
+        f"Could not open webcam (tried indices 0–3). Last: {last_error}. "
+        "Close Zoom/Teams/Camera app, check Windows Settings → Privacy → Camera "
+        "(allow desktop apps), then retry. Set TASH_CAMERA_INDEX=1 to try another device."
+    )
 
 
 def _calc_slump_angle(landmarks: Any, width: int, height: int) -> float:
@@ -94,6 +145,7 @@ class WebcamPostureSensor(Sensor):
     def __init__(self, state: Any, camera_index: int = 0) -> None:
         self._state = state
         self._camera_index = camera_index
+        self._opened_index: int | None = None
         self._cv2, self._mp, self._mp_pose = _check_deps()
         self._cap: Any = None
         self._pose: Any = None
@@ -105,7 +157,7 @@ class WebcamPostureSensor(Sensor):
         mp_pose = self._mp_pose
 
         def _open() -> None:
-            self._cap = cv2.VideoCapture(self._camera_index)
+            self._cap, self._opened_index = open_webcam_capture(cv2, self._camera_index)
             self._pose = mp_pose.Pose(
                 static_image_mode=False,
                 model_complexity=0,          # fastest model
@@ -117,12 +169,6 @@ class WebcamPostureSensor(Sensor):
             self._drawing_styles = mp.solutions.drawing_styles
 
         await asyncio.to_thread(_open)
-
-        if not self._cap.isOpened():
-            raise RuntimeError(
-                f"Could not open webcam at index {self._camera_index}. "
-                "Check that a camera is connected and not in use by another app."
-            )
 
     async def stop(self) -> None:
         if self._cap is not None:
